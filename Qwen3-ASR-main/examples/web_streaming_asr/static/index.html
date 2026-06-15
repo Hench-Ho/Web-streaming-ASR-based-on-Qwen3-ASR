@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen3-ASR 实时语音识别</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #242836;
+            --border: #2e3345;
+            --text: #e1e4ed;
+            --text2: #9ca3af;
+            --accent: #6366f1;
+            --accent2: #818cf8;
+            --green: #22c55e;
+            --red: #ef4444;
+            --yellow: #eab308;
+            --orange: #f97316;
+            --cyan: #06b6d4;
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 顶部导航栏 */
+        .navbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .navbar .logo {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--accent2);
+        }
+        .navbar .logo span { color: var(--text2); font-weight: 400; font-size: 0.9rem; }
+
+        /* 主布局 */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* 左侧控制面板 */
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+        .card h3 {
+            font-size: 0.85rem;
+            color: var(--text2);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        .btn-primary:hover { background: var(--accent2); }
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary.recording {
+            background: var(--red);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+        }
+
+        .btn-secondary {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { background: var(--border); }
+
+        /* 状态指示器 */
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text2);
+            flex-shrink: 0;
+        }
+        .status-dot.connected { background: var(--green); }
+        .status-dot.disconnected { background: var(--red); }
+        .status-dot.speaking { background: var(--yellow); animation: blink 0.5s infinite; }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 0.85rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-label { color: var(--text2); }
+        .stat-value { font-weight: 600; }
+
+        /* 右侧转录显示区 */
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .content-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .content-header h2 { font-size: 1rem; }
+        .segment-count {
+            font-size: 0.8rem;
+            color: var(--text2);
+            background: var(--surface2);
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        /* 转录列表 */
+        .transcript-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .transcript-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .transcript-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .transcript-list::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        /* 转录条目 */
+        .transcript-item {
+            display: flex;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            transition: all 0.3s;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .transcript-item.partial {
+            border-color: var(--accent);
+            opacity: 0.8;
+        }
+        .transcript-item.final {
+            border-color: var(--border);
+        }
+
+        .speaker-badge {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+            color: white;
+        }
+        .spk-0 { background: #6366f1; }
+        .spk-1 { background: #f59e0b; }
+        .spk-2 { background: #22c55e; }
+        .spk-3 { background: #ef4444; }
+        .spk-4 { background: #8b5cf6; }
+        .spk-5 { background: #06b6d4; }
+        .spk-unknown { background: #6b7280; }
+
+        .item-content {
+            flex: 1;
+            min-width: 0;
+        }
+        .item-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+        .item-speaker {
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .item-time {
+            font-size: 0.75rem;
+            color: var(--text2);
+        }
+        .item-lang {
+            font-size: 0.7rem;
+            background: var(--surface2);
+            padding: 2px 8px;
+            border-radius: 10px;
+            color: var(--accent2);
+        }
+        .item-text {
+            font-size: 1rem;
+            line-height: 1.5;
+            word-break: break-all;
+            color: var(--text);
+        }
+        .item-text.partial-text {
+            color: var(--accent2);
+        }
+
+        /* 空状态 */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text2);
+            gap: 12px;
+        }
+        .empty-state .icon {
+            font-size: 3rem;
+            opacity: 0.5;
+        }
+        .empty-state p {
+            font-size: 0.9rem;
+        }
+
+        /* 底部状态栏 */
+        .status-bar {
+            padding: 8px 24px;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 0.8rem;
+            color: var(--text2);
+            flex-shrink: 0;
+        }
+        .status-bar .ws-status { display: flex; align-items: center; gap: 6px; }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                flex-shrink: 1;
+                max-height: 200px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!-- 顶部导航 -->
+<nav class="navbar">
+    <div class="logo">🎙️ Qwen3-ASR <span>| 流式实时语音识别</span></div>
+    <div class="status-indicator">
+        <div class="status-dot disconnected" id="wsDot"></div>
+        <span id="wsStatus">未连接</span>
+    </div>
+</nav>
+
+<!-- 主布局 -->
+<div class="main-container">
+    <!-- 左侧控制面板 -->
+    <aside class="sidebar">
+        <!-- 连接控制 -->
+        <div class="card">
+            <h3>🔌 连接设置</h3>
+            <div style="margin-bottom: 12px;">
+                <label style="font-size:0.8rem;color:var(--text2);">服务器地址</label>
+                <input type="text" id="serverUrl"
+                       value=""
+                       style="width:100%;padding:8px;border-radius:6px;
+                              border:1px solid var(--border);background:var(--surface);
+                              color:var(--text);font-size:0.85rem;margin-top:4px;">
+            </div>
+            <button class="btn btn-primary" id="btnConnect" onclick="toggleConnection()">
+                🔗 连接服务器
+            </button>
+        </div>
+
+        <!-- 录音控制 -->
+        <div class="card">
+            <h3>🎤 录音控制</h3>
+            <button class="btn btn-primary" id="btnRecord" disabled onclick="toggleRecording()">
+                🎤 开始录音
+            </button>
+            <div style="margin-top:12px;">
+                <div class="stat-row">
+                    <span class="stat-label">VAD 状态</span>
+                    <span class="stat-value" id="vadStatus">等待语音</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">当前说话人</span>
+                    <span class="stat-value" id="currentSpeaker">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">音频缓冲</span>
+                    <span class="stat-value" id="audioBuffer">0.0s</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="card">
+            <h3>📊 会话统计</h3>
+            <div class="stat-row">
+                <span class="stat-label">识别片段</span>
+                <span class="stat-value" id="statSegments">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">说话人数</span>
+                <span class="stat-value" id="statSpeakers">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">总时长</span>
+                <span class="stat-value" id="statDuration">0.0s</span>
+            </div>
+            <button class="btn btn-secondary" style="margin-top:12px;"
+                    onclick="clearTranscript()">
+                🗑️ 清空记录
+            </button>
+        </div>
+    </aside>
+
+    <!-- 转录显示区 -->
+    <div class="content">
+        <div class="content-header">
+            <h2>📝 实时转写结果</h2>
+            <span class="segment-count" id="segmentCount">0 条</span>
+        </div>
+
+        <div class="transcript-list" id="transcriptList">
+            <div class="empty-state" id="emptyState">
+                <div class="icon">🎙️</div>
+                <p>点击「开始录音」开始实时语音识别</p>
+                <p style="font-size:0.8rem;color:var(--text2);">
+                    VAD 自动检测语音 → ASR 实时转写 → 说话人识别
+                </p>
+            </div>
+        </div>
+
+        <!-- 底部状态栏 -->
+        <div class="status-bar">
+            <div class="ws-status">
+                <div class="status-dot disconnected" id="wsDot2"></div>
+                <span id="wsLatency">--</span>
+            </div>
+            <span>|</span>
+            <span>采样率: <span id="displaySampleRate">16kHz</span></span>
+            <span>|</span>
+            <span>音频格式: Float32 PCM</span>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================================
+// 自动检测 WebSocket 地址
+// ============================================================================
+(function() {
+    const input = document.getElementById('serverUrl');
+    if (input && !input.value) {
+        // 根据当前页面协议自动选择 ws:// 或 wss://
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        input.value = wsProto + '//' + window.location.host + '/ws';
+    }
+})();
+
+// ============================================================================
+// 全局状态
+// ============================================================================
+let ws = null;
+let isConnected = false;
+let isRecording = false;
+let audioContext = null;
+let scriptProcessor = null;
+let micStream = null;
+let partialItems = {};  // segId → DOM元素（用于更新中间结果）
+let segmentCount = 0;
+let actualSampleRate = 16000;  // 实际采样率（可能不是 16kHz）
+let resampleRatio = 1.0;      // 重采样比例
+let totalDuration = 0;
+let audioBufferDuration = 0;
+
+// ============================================================================
+// DOM 引用
+// ============================================================================
+const btnConnect = document.getElementById('btnConnect');
+const btnRecord = document.getElementById('btnRecord');
+const wsDot = document.getElementById('wsDot');
+const wsDot2 = document.getElementById('wsDot2');
+const wsStatus = document.getElementById('wsStatus');
+const wsLatency = document.getElementById('wsLatency');
+const vadStatus = document.getElementById('vadStatus');
+const currentSpeaker = document.getElementById('currentSpeaker');
+const audioBuffer = document.getElementById('audioBuffer');
+const statSegments = document.getElementById('statSegments');
+const statSpeakers = document.getElementById('statSpeakers');
+const statDuration = document.getElementById('statDuration');
+const transcriptList = document.getElementById('transcriptList');
+const emptyState = document.getElementById('emptyState');
+const segmentCountEl = document.getElementById('segmentCount');
+const serverUrl = document.getElementById('serverUrl');
+
+// ============================================================================
+// 说话人颜色映射
+// ============================================================================
+function getSpeakerClass(speakerId) {
+    if (speakerId < 0) return 'spk-unknown';
+    return `spk-${speakerId % 6}`;
+}
+
+function getSpeakerName(speakerId) {
+    if (speakerId < 0) return '?';
+    return `说话人${speakerId}`;
+}
+
+// ============================================================================
+// WebSocket 连接管理
+// ============================================================================
+function toggleConnection() {
+    if (isConnected) {
+        disconnect();
+    } else {
+        connect();
+    }
+}
+
+function connect() {
+    const url = serverUrl.value.trim();
+    if (!url) {
+        alert('请输入服务器地址');
+        return;
+    }
+
+    btnConnect.textContent = '⏳ 连接中...';
+    btnConnect.disabled = true;
+
+    try {
+        ws = new WebSocket(url);
+    } catch (e) {
+        alert('创建 WebSocket 失败: ' + e.message);
+        btnConnect.textContent = '🔗 连接服务器';
+        btnConnect.disabled = false;
+        return;
+    }
+
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+        isConnected = true;
+        btnConnect.textContent = '🔌 断开连接';
+        btnConnect.disabled = false;
+        btnRecord.disabled = false;
+        btnConnect.classList.add('connected');
+        updateConnectionStatus(true);
+        wsLatency.textContent = '已连接';
+        console.log('WebSocket 已连接');
+    };
+
+    ws.onclose = (event) => {
+        isConnected = false;
+        ws = null;
+        btnConnect.textContent = '🔗 连接服务器';
+        btnConnect.disabled = false;
+        btnConnect.classList.remove('connected');
+        updateConnectionStatus(false);
+
+        // 如果正在录音，停止
+        if (isRecording) {
+            stopRecording();
+        }
+        btnRecord.disabled = true;
+        wsLatency.textContent = `断开 (code: ${event.code})`;
+        console.log('WebSocket 已断开', event.code);
+    };
+
+    ws.onerror = (error) => {
+        console.error('WebSocket 错误:', error);
+        wsLatency.textContent = '连接错误';
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            handleMessage(msg);
+        } catch (e) {
+            console.error('消息解析失败:', e);
+        }
+    };
+}
+
+function disconnect() {
+    if (ws) {
+        // 发送停止命令
+        ws.send(JSON.stringify({ type: 'stop' }));
+        setTimeout(() => {
+            if (ws) ws.close();
+        }, 500);
+    }
+}
+
+function updateConnectionStatus(connected) {
+    const status = connected ? '已连接' : '未连接';
+    wsStatus.textContent = status;
+    [wsDot, wsDot2].forEach(dot => {
+        dot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
+    });
+}
+
+// ============================================================================
+// 消息处理
+// ============================================================================
+function handleMessage(msg) {
+    switch (msg.type) {
+        case 'partial':
+            handlePartial(msg);
+            break;
+        case 'final':
+            handleFinal(msg);
+            break;
+        case 'status':
+            handleStatus(msg);
+            break;
+        case 'error':
+            handleError(msg);
+            break;
+    }
+}
+
+function handlePartial(msg) {
+    // 更新或创建中间结果显示
+    if (msg.segment_id in partialItems) {
+        const item = partialItems[msg.segment_id];
+        item.querySelector('.item-text').textContent = msg.text;
+        item.querySelector('.item-time').textContent =
+            `${msg.start_sec.toFixed(1)}s - ${msg.end_sec.toFixed(1)}s (转写中...)`;
+    } else {
+        const item = createTranscriptItem(msg, true);
+        partialItems[msg.segment_id] = item;
+        addToTranscript(item);
+    }
+
+    // 更新说话人状态
+    if (msg.speaker_id >= 0) {
+        currentSpeaker.textContent = getSpeakerName(msg.speaker_id);
+    }
+    vadStatus.textContent = '语音识别中...';
+
+    // 隐藏空状态
+    hideEmptyState();
+}
+
+function handleFinal(msg) {
+    // 移除对应的中间结果
+    if (msg.segment_id in partialItems) {
+        const oldItem = partialItems[msg.segment_id];
+        oldItem.remove();
+        delete partialItems[msg.segment_id];
+    }
+
+    // 创建最终结果
+    const item = createTranscriptItem(msg, false);
+    addToTranscript(item);
+
+    // 更新统计
+    segmentCount++;
+    totalDuration += (msg.end_sec - msg.start_sec);
+    updateStats();
+
+    // 更新说话人
+    if (msg.speaker_id >= 0) {
+        currentSpeaker.textContent = getSpeakerName(msg.speaker_id);
+    }
+
+    vadStatus.textContent = '等待语音';
+    audioBufferDuration = 0;
+    audioBuffer.textContent = '0.0s';
+
+    hideEmptyState();
+}
+
+function handleStatus(msg) {
+    // 解析可能的JSON统计信息
+    try {
+        const stats = JSON.parse(msg.text);
+        if (stats.num_speakers !== undefined) {
+            statSpeakers.textContent = stats.num_speakers;
+        }
+        if (stats.total_segments !== undefined) {
+            statSegments.textContent = stats.total_segments;
+        }
+        if (stats.total_duration !== undefined) {
+            statDuration.textContent = stats.total_duration.toFixed(1) + 's';
+        }
+    } catch (e) {
+        // 普通文本状态
+        if (msg.text.includes('语音开始')) {
+            vadStatus.textContent = '🔊 语音检测中';
+            currentSpeaker.textContent = '识别中...';
+        } else if (msg.text === 'pong') {
+            wsLatency.textContent = '已连接 (pong)';
+        }
+    }
+}
+
+function handleError(msg) {
+    console.error('服务端错误:', msg.text);
+    // 显示错误提示
+    const errorItem = document.createElement('div');
+    errorItem.className = 'transcript-item';
+    errorItem.style.borderColor = 'var(--red)';
+    errorItem.innerHTML = `
+        <div class="speaker-badge spk-unknown">!</div>
+        <div class="item-content">
+            <div class="item-header">
+                <span class="item-speaker" style="color:var(--red);">错误</span>
+                <span class="item-time">${msg.start_sec.toFixed(1)}s</span>
+            </div>
+            <div class="item-text" style="color:var(--red);">${escapeHtml(msg.text)}</div>
+        </div>
+    `;
+    addToTranscript(errorItem);
+    hideEmptyState();
+}
+
+// ============================================================================
+// UI 辅助函数
+// ============================================================================
+function createTranscriptItem(msg, isPartial) {
+    const div = document.createElement('div');
+    div.className = 'transcript-item ' + (isPartial ? 'partial' : 'final');
+    div.id = isPartial ? `partial-${msg.segment_id}` : `final-${Date.now()}`;
+
+    const spkClass = getSpeakerClass(msg.speaker_id);
+    const spkName = getSpeakerName(msg.speaker_id);
+    const lang = msg.language ? `<span class="item-lang">${escapeHtml(msg.language)}</span>` : '';
+    const timeStr = isPartial
+        ? `${msg.start_sec.toFixed(1)}s - ${msg.end_sec.toFixed(1)}s (转写中...)`
+        : `${msg.start_sec.toFixed(1)}s - ${msg.end_sec.toFixed(1)}s`;
+
+    div.innerHTML = `
+        <div class="speaker-badge ${spkClass}">${msg.speaker_id >= 0 ? msg.speaker_id : '?'}</div>
+        <div class="item-content">
+            <div class="item-header">
+                <span class="item-speaker">${spkName}</span>
+                <span class="item-time">${timeStr}</span>
+                ${lang}
+            </div>
+            <div class="item-text ${isPartial ? 'partial-text' : ''}">${escapeHtml(msg.text) || '(空)'}</div>
+        </div>
+    `;
+
+    return div;
+}
+
+function addToTranscript(item) {
+    transcriptList.appendChild(item);
+    // 自动滚动到底部
+    transcriptList.scrollTop = transcriptList.scrollHeight;
+    updateSegmentCount();
+}
+
+function hideEmptyState() {
+    if (emptyState) {
+        emptyState.style.display = 'none';
+    }
+}
+
+function updateSegmentCount() {
+    const count = transcriptList.querySelectorAll('.transcript-item.final').length;
+    segmentCountEl.textContent = count + ' 条';
+}
+
+function updateStats() {
+    statSegments.textContent = segmentCount;
+    statDuration.textContent = totalDuration.toFixed(1) + 's';
+}
+
+function clearTranscript() {
+    transcriptList.innerHTML = '';
+    partialItems = {};
+    segmentCount = 0;
+    totalDuration = 0;
+    audioBufferDuration = 0;
+    if (emptyState) {
+        emptyState.style.display = '';
+        transcriptList.appendChild(emptyState);
+    }
+    updateSegmentCount();
+    updateStats();
+    audioBuffer.textContent = '0.0s';
+    currentSpeaker.textContent = '-';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============================================================================
+// 麦克风录音
+// ============================================================================
+async function toggleRecording() {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        await startRecording();
+    }
+}
+
+async function startRecording() {
+    if (!isConnected) {
+        alert('请先连接服务器');
+        return;
+    }
+
+    try {
+        // 请求麦克风权限
+        micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+            video: false,
+        });
+
+        // 创建 AudioContext - 尝试 16kHz，浏览器可能忽略并使用硬件采样率
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 16000,
+        });
+
+        // 记录实际采样率
+        actualSampleRate = audioContext.sampleRate;
+        resampleRatio = actualSampleRate / 16000;
+        console.log('AudioContext 采样率:', actualSampleRate,
+                     '(目标: 16000, 重采样比例:', resampleRatio.toFixed(3) + ')');
+
+        const source = audioContext.createMediaStreamSource(micStream);
+
+        // 使用 ScriptProcessorNode 获取音频数据
+        // 缓冲区大小根据实际采样率调整，目标约 250ms
+        const bufferSize = Math.pow(2, Math.ceil(Math.log2(actualSampleRate * 0.25)));
+        scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+        scriptProcessor.onaudioprocess = (event) => {
+            if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const inputData = event.inputBuffer.getChannelData(0);
+
+            // 重采样到 16kHz（如果需要）
+            let pcm16k;
+            if (Math.abs(resampleRatio - 1.0) < 0.001) {
+                // 已经是 16kHz，直接发送
+                pcm16k = new Float32Array(inputData);
+            } else {
+                // 线性插值重采样到 16kHz
+                pcm16k = resampleLinear(inputData, actualSampleRate, 16000);
+            }
+
+            ws.send(pcm16k.buffer);
+
+            // 更新缓冲时间
+            audioBufferDuration += pcm16k.length / 16000;
+            audioBuffer.textContent = audioBufferDuration.toFixed(1) + 's';
+        };
+
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+
+        isRecording = true;
+        btnRecord.textContent = '⏹️ 停止录音';
+        btnRecord.classList.add('recording');
+        vadStatus.textContent = '监听中...';
+        wsLatency.textContent = '录音中 @' + (actualSampleRate/1000).toFixed(0) + 'kHz';
+
+        console.log('录音已开始 (16kHz mono 输出)');
+        document.getElementById('displaySampleRate').textContent = (actualSampleRate/1000).toFixed(0) + 'kHz→16kHz';
+
+    } catch (err) {
+        console.error('麦克风访问失败:', err);
+        alert('无法访问麦克风: ' + err.message);
+    }
+}
+
+/**
+ * 线性插值重采样
+ * @param {Float32Array} data - 原始音频数据
+ * @param {number} fromRate - 原始采样率
+ * @param {number} toRate - 目标采样率
+ * @returns {Float32Array} 重采样后的数据
+ */
+function resampleLinear(data, fromRate, toRate) {
+    if (fromRate === toRate) return new Float32Array(data);
+
+    const ratio = fromRate / toRate;
+    const newLength = Math.floor(data.length / ratio);
+    const result = new Float32Array(newLength);
+
+    for (let i = 0; i < newLength; i++) {
+        const srcIndex = i * ratio;
+        const srcIndexFloor = Math.floor(srcIndex);
+        const srcIndexCeil = Math.min(srcIndexFloor + 1, data.length - 1);
+        const t = srcIndex - srcIndexFloor;
+
+        result[i] = data[srcIndexFloor] * (1 - t) + data[srcIndexCeil] * t;
+    }
+
+    return result;
+}
+
+function stopRecording() {
+    isRecording = false;
+
+    // 停止 ScriptProcessor
+    if (scriptProcessor) {
+        scriptProcessor.disconnect();
+        scriptProcessor = null;
+    }
+
+    // 关闭 AudioContext
+    if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close().catch(console.error);
+        audioContext = null;
+    }
+
+    // 停止麦克风流
+    if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+        micStream = null;
+    }
+
+    btnRecord.textContent = '🎤 开始录音';
+    btnRecord.classList.remove('recording');
+    vadStatus.textContent = '已停止';
+    wsLatency.textContent = isConnected ? '已连接' : '未连接';
+    audioBufferDuration = 0;
+    audioBuffer.textContent = '0.0s';
+
+    console.log('录音已停止');
+
+    // 发送停止命令通知服务端处理缓冲
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+    }
+}
+
+// ============================================================================
+// 键盘快捷键
+// ============================================================================
+document.addEventListener('keydown', (event) => {
+    // Ctrl+Shift+R: 开始/停止录音
+    if (event.ctrlKey && event.shiftKey && event.key === 'R') {
+        event.preventDefault();
+        if (isConnected) toggleRecording();
+    }
+    // Ctrl+Shift+C: 连接/断开
+    if (event.ctrlKey && event.shiftKey && event.key === 'C') {
+        event.preventDefault();
+        toggleConnection();
+    }
+});
+
+// ============================================================================
+// 页面卸载时清理
+// ============================================================================
+window.addEventListener('beforeunload', () => {
+    stopRecording();
+    if (ws) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+        ws.close();
+    }
+});
+</script>
+
+</body>
+</html>
